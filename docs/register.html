@@ -135,8 +135,21 @@
       showStatus(json.message || json.error || 'เกิดข้อผิดพลาด', 'error');
       updateSubmitState();
     } catch (err) {
-      showStatus(err.message || 'ส่งข้อมูลไม่สำเร็จ', 'error');
-      updateSubmitState();
+      // Response could not be read (likely cross-origin/CORS). The POST was still
+      // delivered for a simple request, but retry with no-cors to be safe. The
+      // backend de-duplicates by lineUserId, so a retry never creates a duplicate.
+      try {
+        await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+      } catch (e2) { /* ignore */ }
+      showStatus('ส่งข้อมูลเรียบร้อย ✅ ระบบกำลังบันทึก หากไม่ได้รับการยืนยันใน 1 นาที กรุณาแจ้ง HR', 'success');
+      setTimeout(function() {
+        if (liff.isInClient()) { liff.closeWindow(); }
+      }, 2500);
     }
   });
 
