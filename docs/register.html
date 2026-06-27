@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Mini HR App - register</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #fff8f0; color: #1a1a1a; padding: 16px;
+  }
+  .header {
+    background: linear-gradient(135deg, #d4550a, #f28c28);
+    color: #fff; padding: 24px; border-radius: 16px; margin-bottom: 16px;
+  }
+  .header h1 { font-size: 22px; margin-bottom: 4px; }
+  .header p { opacity: 0.92; font-size: 13px; }
+  .field {
+    background: #fff; padding: 14px; border-radius: 10px; margin-bottom: 10px;
+  }
+  .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 6px; }
+  .field input {
+    width: 100%; border: 1px solid #ddd; padding: 12px; border-radius: 8px;
+    font-size: 15px; font-family: inherit;
+  }
+  .field input:focus { border-color: #d4550a; outline: none; }
+  .field input:disabled { background: #f0f0f0; color: #888; }
+  .btn-submit {
+    background: #d4550a; color: #fff; border: none; padding: 16px;
+    border-radius: 12px; font-size: 17px; font-weight: 700; width: 100%; margin-top: 12px;
+  }
+  .btn-submit:disabled { background: #aaa; }
+  #status {
+    margin-top: 14px; padding: 12px; border-radius: 8px; text-align: center; display: none;
+  }
+  #status.show { display: block; }
+  #status.success { background: #1f7a1f; color: #fff; }
+  #status.error { background: #b23a3a; color: #fff; }
+  #status.loading { background: #f2a640; color: #fff; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>ลงทะเบียนพนักงาน</h1>
+  <p>กรอกข้อมูลครั้งเดียวเพื่อเริ่มใช้งานระบบ</p>
+</div>
+
+<div class="field"><label>ชื่อ-นามสกุล *</label><input id="displayName" placeholder="สมชาย ใจดี"></div>
+<div class="field"><label>เบอร์โทร *</label><input id="phone" type="tel" placeholder="0812345678"></div>
+<div class="field"><label>LINE ID *</label><input id="lineUserId" disabled></div>
+<div class="field"><label>แผนก *</label><input id="department" placeholder="Production"></div>
+<div class="field"><label>ตำแหน่ง *</label><input id="position" placeholder="Staff"></div>
+
+<button class="btn-submit" id="btnSubmit" disabled>ลงทะเบียน</button>
+<div id="status"></div>
+
+<script>
+  const LIFF_ID = '2010518964-DU5sTlpj';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyjUNaeLsb90e6lC7uY2ZB3l7ymosy5xTp4y7u-t4Y--mQGvZMoFOrcFaxvREU7CsKKgg/exec';
+
+  let currentLineUserId = '';
+
+  function showStatus(message, level) {
+    const el = document.getElementById('status');
+    el.textContent = message;
+    el.className = 'show ' + level;
+  }
+
+  function updateSubmitState() {
+    const required = ['displayName', 'phone', 'department', 'position'];
+    const ok = required.every(function(id) {
+      return document.getElementById(id).value.trim();
+    }) && currentLineUserId;
+    document.getElementById('btnSubmit').disabled = !ok;
+  }
+
+  async function initLiff() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) {
+        liff.login({ redirectUri: window.location.href });
+        return;
+      }
+      const profile = await liff.getProfile();
+      currentLineUserId = profile.userId || '';
+      document.getElementById('lineUserId').value = currentLineUserId;
+      if (!document.getElementById('displayName').value.trim()) {
+        document.getElementById('displayName').value = profile.displayName || '';
+      }
+      updateSubmitState();
+    } catch (err) {
+      showStatus('LIFF init error: ' + err.message, 'error');
+    }
+  }
+
+  document.querySelectorAll('input').forEach(function(el) {
+    el.addEventListener('input', updateSubmitState);
+  });
+
+  document.getElementById('btnSubmit').addEventListener('click', async function() {
+    showStatus('กำลังส่งข้อมูล...', 'loading');
+    document.getElementById('btnSubmit').disabled = true;
+
+    const payload = {
+      action: 'register',
+      lineUserId: currentLineUserId,
+      displayName: document.getElementById('displayName').value.trim(),
+      phone: document.getElementById('phone').value.trim(),
+      department: document.getElementById('department').value.trim(),
+      position: document.getElementById('position').value.trim()
+    };
+
+    try {
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (json.ok) {
+        showStatus('ลงทะเบียนเรียบร้อย รหัส: ' + json.employeeId, 'success');
+        setTimeout(function() {
+          if (liff.isInClient()) { liff.closeWindow(); }
+        }, 1500);
+        return;
+      }
+
+      if (json.error === 'already_registered') {
+        showStatus('คุณลงทะเบียนแล้ว (' + (json.employeeId || '-') + ')', 'error');
+        return;
+      }
+
+      showStatus(json.message || json.error || 'เกิดข้อผิดพลาด', 'error');
+      updateSubmitState();
+    } catch (err) {
+      showStatus(err.message || 'ส่งข้อมูลไม่สำเร็จ', 'error');
+      updateSubmitState();
+    }
+  });
+
+  initLiff();
+</script>
+</body>
+</html>
