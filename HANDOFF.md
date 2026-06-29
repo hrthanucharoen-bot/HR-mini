@@ -2,6 +2,19 @@
 
 Continuation handoff for the production rollout (Google Apps Script + LINE OA + LIFF) for TNC Garment.
 
+## UPDATE 2026-06-29 (later) — Registration CONFIRMED working + back-office = Google Sheet guardrails
+
+- **Registration now works end-to-end.** `Employees` sheet has real rows: EMP-0001 (curl test, junk — safe to delete) and **EMP-0002 = the owner's real LINE registration** (`Uae8148cab43...`, phone 0937381303, is_active checked). The 3-bug fix (jsonOutput wrap + register handler optional bank/selfie/idcard + GitHub Pages hosting) is validated.
+- **Back-office decision:** building a separate web admin was blocked by cross-origin **reads** (CORS blocks reading Apps Script responses from github.io; a JSONP `doGet?api=` bridge was added in `รหัส.gs` + `handleApiGet()` but a deployment kept serving the page instead of JSONP — left parked/unverified). Per user choice, the back-office is the **Google Sheet itself with guardrails** instead.
+- **Guardrails applied** via `setupAdminGuardrails()` (a new untitled `.gs` file in the project; re-runnable). Confirmed live on `Employees`/`LeaveQuota`:
+  - `is_active` (col R) → checkboxes
+  - `approver_L1_id` / `approver_L2_id` (cols O/P) → dropdown limited to existing `employee_id` (Employees!A2:A1000)
+  - `LeaveQuota` quotas (sick/personal/vacation) → number ≥ 0
+  - `LeaveQuota.employee_id` → dropdown of existing employee_ids
+  - System columns protected warning-only: Employees A,B (id/lineId), M,N (image urls), S (registered_at); LeaveQuota D,F,H (*_used)
+- **How the owner manages staff:** edit `display_name` directly; set approvers via the O/P dropdowns; **deactivate by un-checking `is_active`** (do NOT delete rows — preserves history); set leave quotas on the `LeaveQuota` tab (add a row per employee/year if missing). Delete the EMP-0001 test row.
+- The JSONP/admin-web path, if revisited: the read-CORS wall is real; either finish the `doGet?api=` JSONP bridge (verify the deployment actually picks up the api branch) or host the backend somewhere that returns CORS headers. `handleApiGet()` + the `doGet` api line are already in `รหัส.gs` (saved); active deployment with them is **v18** `AKfycbwnxxOPXwTaHGsbYK1FjvMO8Ryza7cbPKf4a6RK_hw4ijIq3FcPQOZX5G_Ue1bUg5jHNQ` (register.html still points to v16 — fine, register works).
+
 ## TL;DR of this session
 
 The registration ("register") LIFF flow was broken. Root-caused and fixed **three stacked bugs**. Registration LINE-ID auto-fill now works; backend write fixed; pending final end-to-end confirmation in LINE.
