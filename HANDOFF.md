@@ -1,226 +1,65 @@
-# Mini HR App - Handoff Update (2026-06-27)
+# Mini HR App — Handoff Update (2026-06-29)
 
-This handoff is for continuing the real production rollout of the Mini HR App (Google Apps Script + LINE OA + LIFF).
+Continuation handoff for the production rollout (Google Apps Script + LINE OA + LIFF) for TNC Garment.
 
-## Current Goal
+## TL;DR of this session
 
-Finish the production registration path first, then continue the remaining rollout steps:
+The registration ("register") LIFF flow was broken. Root-caused and fixed **three stacked bugs**. Registration LINE-ID auto-fill now works; backend write fixed; pending final end-to-end confirmation in LINE.
 
-1. Fix `register` LIFF so the owner/HR can register successfully inside LINE
-2. Confirm first employee record is created in `Employees`
-3. Finalize Rich Menu production links
-4. Continue with employee setup and approval flow verification
+## CRITICAL ARCHITECTURE CHANGE — LIFF pages must NOT be hosted on Apps Script
 
-## Critical Reminder
+**Confirmed on-device (alert showed origin `n-...-script.googleusercontent.com`):** Apps Script `HtmlService`/`doGet` serves user HTML inside a nested sandbox iframe on a `*.googleusercontent.com` origin. The LIFF endpoint is registered as `script.google.com/.../exec`, so the running page's origin never matches → `liff.init()` cannot get the LINE client context → `getProfile()` never returns → the LINE-ID field stays blank.
 
-The live production source of truth is the Apps Script editor, not the local repo.
+**Fix = host each LIFF page on a top-level domain.** We use **GitHub Pages**:
+- Repo: `hrthanucharoen-bot/HR-mini`, Pages source = branch `main`, folder `/docs`.
+- `register` page: `docs/register.html` → served at `https://hrthanucharoen-bot.github.io/HR-mini/register.html`
+- The static page hardcodes `LIFF_ID` + `APPS_SCRIPT_URL` and calls Apps Script `/exec` **only as a backend API** via `fetch` POST with `Content-Type: text/plain` (simple request; plus a `no-cors` fallback in the catch to survive any CORS read failure — backend de-dupes by lineUserId so retries are safe).
+- The LIFF **endpoint URL** in LINE console was changed from the Apps Script URL → the GitHub Pages URL.
 
-Do not assume local files match deployed Apps Script files.
+**The old `liff/*.html` files in the repo (Apps Script-templated, `<?= LIFF_ID ?>`) are now obsolete for LIFF use.** The other 8 LIFF apps still need the same migration (see Remaining work).
 
-Also:
+## Three bugs fixed this session
 
-- Do not enter LINE secrets/tokens into forms on behalf of the user
-- The user must enter any credentials/secrets personally
+1. **doGet path prefix** (earlier): `รหัส.gs doGet` used `createTemplateFromFile(page)` but files are named `liff/<page>`. Fixed to `'liff/' + page`; default page `'register'`. (Now moot for register since it's on GitHub Pages, but still relevant for any Apps Script-served page.)
+2. **doPost returned a raw object**: `รหัส.gs doPost` (~line 56) did `return routeAction(action, body);`. `routeAction` (Router.gs) returns **plain objects**, so Apps Script rejected the response with "script completed but the return value is not a supported result type" → client saw "Failed to fetch". Fixed to `return jsonOutput(routeAction(action, body));`.
+3. **register handler required the OLD schema**: `handlers/Register.gs register()` still had `if (!bankAccountNo) return ... missing_bank`, plus `missing_selfie` / `missing_id_card`, and an unconditional image-upload block that returned `upload_failed`. The simplified form only sends `displayName/phone/lineUserId/department/position`, so register() returned `missing_bank` and never wrote the row (Employees stayed empty). Fixed: removed those 3 validations (now optional) and guarded the upload with `if (selfieBase64 && idCardBase64) try { ... }`.
 
-## IDs / URLs
+## Current live IDs / URLs
 
 - Google Sheet DB: `1RXzMpPJkIyKJ0ydVNNpoOYXq_4wcJLWoSWIGuPjgoNU`
-- Apps Script project ID: `10Juj0moR123zmZ-1dnH-0v3PdWSSofXIO2oe6vmK1Ak4O5dHDwgoW4EU`
-- Old web app URL:
-  - `https://script.google.com/macros/s/AKfycbyqQ8lpbEUMpYSlWP7B9UCiYPmwuabVu5yIiBLQ5HjRmi53boc4cguSRATox_bAZeGn9w/exec`
-- New web app URL created on 2026-06-27:
-  - `https://script.google.com/macros/s/AKfycbwBNRzw32K9dPOePWFh-megHgEdLCb3M8_oJJVKLI8HQqdryG7Fg5Y-UGfR4KCAnI2SbQ/exec`
-- LINE Login channel ID: `2010518964`
-- Register LIFF ID: `2010518964-DU5sTlpj`
-- Owner LINE user ID:
-  - `Ud33c1d12d516bdedec84ac0d2a7a845d`
+- Apps Script project: `10Juj0moR123zmZ-1dnH-0v3PdWSSofXIO2oe6vmK1Ak4O5dHDwgoW4EU`
+- **Active web-app deployment (v16, 2026-06-27 18:22), access = Anyone:**
+  - `https://script.google.com/macros/s/AKfycbxFUO1ksK1vqOeEhIiWwfdiYvTL4yaQCr3M_wwbZbIfDj5aUNE_BUI_0SctiUp3B5EDlA/exec`
+  - NOTE: each new deployment gets a new `/exec` URL. The GitHub Pages `register.html` `APPS_SCRIPT_URL` must be kept in sync with whatever deployment is active. (Older deployments AKfycbyj…, AKfycbx0… are superseded.)
+- LINE Login channel ID: `2010518964` — **status: Published** (changed from Developing this session; required so non-developers can open the LIFF).
+- Register LIFF ID: `2010518964-DU5sTlpj` — endpoint now `https://hrthanucharoen-bot.github.io/HR-mini/register.html`, scopes `openid, profile`, size Full.
+- Owner LINE user ID: `Ud33c1d12d516bdedec84ac0d2a7a845d`
 
-## What Was Successfully Done
+## Constraints (still in force)
 
-### Production config and backend
+- Do all browser work in **Chrome under hr.thanucharoen@gmail.com** (not CLI/clasp/desktop). Editing Apps Script is via the web editor only.
+- Never enter LINE secrets/tokens/passwords into any form — the user does that personally.
+- The live Apps Script editor is the production source of truth; local repo `src/` may differ.
 
-- `OWNER_LINE_USER_ID` was updated in live Script Properties
-- Live `Router.gs` was fixed so action responses return JSON correctly
-- Registration flow in live backend was simplified to only:
-  - `displayName`
-  - `phone`
-  - `lineUserId`
-  - `department`
-  - `position`
-- Live register UI was simplified to match that reduced schema
-- POST verification against production backend succeeded earlier:
-  - missing fields returned structured JSON errors
+## Apps Script web-editor gotchas (learned the hard way)
 
-### Rich Menu
+- The version dropdown in "Manage deployments → edit (pencil)" is flaky; selecting "New version" often doesn't stick. **Prefer "New deployment"** (always uses latest saved code) — but it mints a new `/exec` URL, so update `register.html` after.
+- The editor auto-closes brackets: typing `try {` or `if (...)` inserts a matching `}`/`)`. After typing, delete the stray closing char.
+- Do NOT send `Page_Down` via the key tool — it gets typed as literal text into the file. Use `ctrl+End`, `Home`, `shift+End`, `ctrl+F` (these work).
 
-- Rich Menu assets were created locally:
-  - [employee-rich-menu.png](C:/Users/ADMIN/Documents/Codex/2026-06-26/g-h/outputs/employee-rich-menu.png)
-  - [owner-rich-menu.png](C:/Users/ADMIN/Documents/Codex/2026-06-26/g-h/outputs/owner-rich-menu.png)
-- A live Apps Script helper `setupStep4RichMenus()` was added and run successfully
-- Execution log showed success, and no runtime error was reported when that helper ran
-- The intent of that helper:
-  - create employee rich menu
-  - create owner rich menu
-  - set employee menu as default
-  - link owner menu to the owner LINE user ID
+## Remaining work
 
-## What Is Still Broken
+1. **Confirm register end-to-end** (pending): user registers in LINE → expect "ลงทะเบียนเรียบร้อย" → verify a row appears in `Employees` (header-only as of last check). Test rows `U_TEST_CURL_000x` may exist from curl attempts — clean them up.
+2. **Migrate the other 8 LIFF pages to GitHub Pages** the same way (checkin, leave, ot, balance, hr-tools, approval-inbox, evidence, response): create `docs/<page>.html` static versions (hardcode LIFF_ID per page + APPS_SCRIPT_URL), push, and repoint each LIFF endpoint in the LINE console.
+3. Set/verify rich menu links point to the `liff.line.me/<liffId>` URLs.
+4. Add remaining employees + set approver_L1 (manager) / approver_L2 (owner).
+5. Full real flow test: checkin (IN/OUT) → leave → approval L1→L2 → view results.
+6. Security: LINE webhook signature verification is currently disabled (UNSAFE) — see `รหัส.gs doPost` Case 1; needs a proxy (e.g. Cloudflare Worker) to verify, since Apps Script can't read request headers.
 
-### Registration in LINE is still not working
+NOTE (already in live code, confirmed this session): the 2-level approval restructure from the plan (`L1=ผู้จัดการ → L2=เจ้าของ`, statuses `pending_L1/pending_L2/approved`) and 2-slot checkin appear to be implemented in `handlers/Approval.gs` etc.
 
-The user still cannot complete registration via the `register` LIFF entry.
+## How to continue
 
-## Root Causes Found So Far
-
-### Root cause 1: LIFF endpoint mismatch
-
-Earlier `register` LIFF endpoint used the classic Apps Script URL:
-
-- `https://script.google.com/macros/s/.../exec?page=register`
-
-This caused LIFF warnings like:
-
-- current URL not related to endpoint URL
-- `access.line.me refused to connect`
-- `400 bad request`
-
-The user updated the LIFF endpoint afterward.
-
-### Root cause 2: live register HTML was still using old LIFF login behavior
-
-Inspection of live deployed HTML showed the production `register` page still contained old logic like:
-
-- `await liff.init({ liffId: LIFF_ID });`
-- `if (!liff.isLoggedIn()) { liff.login(); return; }`
-
-This is likely incompatible with the actual Apps Script iframe/rendering situation being used here.
-
-### Root cause 3: production was still serving an old deployment
-
-Apps Script editor showed unsaved changes and then later a deployment dialog still pointing to an older version.
-
-After that, a new deployment was created on 2026-06-27 and produced a new web app URL:
-
-- `https://script.google.com/macros/s/AKfycbwBNRzw32K9dPOePWFh-megHgEdLCb3M8_oJJVKLI8HQqdryG7Fg5Y-UGfR4KCAnI2SbQ/exec`
-
-### Root cause 4: new deployment currently fails with missing HTML file path
-
-Testing the new deployment directly showed:
-
-- `Error loading page: ไม่พบไฟล์ HTML ชื่อ register`
-
-This strongly suggests `doGet(e)` in `รหัส.gs` is still using the wrong file mapping in the version that was deployed.
-
-Specifically, it appears to still try to resolve `register` instead of `liff/register`.
-
-## Most Important Current State
-
-At the moment there are two distinct deployment states:
-
-### Old deployment
-
-- URL loads, but serves stale register HTML / stale LIFF behavior
-
-### New deployment
-
-- URL exists, but currently fails with:
-  - `ไม่พบไฟล์ HTML ชื่อ register`
-
-So the next agent should fix the live `doGet(e)` mapping first, save, create a fresh web app deployment again, then update LIFF/Rich Menu to the latest correct URL.
-
-## Latest Code Direction Needed
-
-The intended `doGet(e)` should resolve HTML files like this:
-
-```js
-function doGet(e) {
-  const page = (e && e.parameter && e.parameter.page) ? e.parameter.page : 'register';
-  const file = page === 'home' ? 'liff/register' : 'liff/' + page;
-  const t = HtmlService.createTemplateFromFile(file);
-  t.LIFF_ID = getLiffIdForPage(page);
-  t.SCRIPT_URL = getProp('APPS_SCRIPT_URL');
-  return t.evaluate()
-    .setTitle('Mini HR App - ' + page)
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-```
-
-This exact direction was already identified as the next fix.
-
-## Status of `liff/register.html`
-
-Apps Script editor UI showed that `liff/register.html` in the editor had already been updated to a simplified form matching:
-
-- `displayName`
-- `phone`
-- `lineUserId`
-- `department`
-- `position`
-
-The visible editor content also showed newer registration submit code using:
-
-- `action: 'register'`
-- `fetch(APPS_SCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) })`
-
-However, that improved editor state was not yet fully reflected in the deployment the user was actually hitting.
-
-## User Actions Already Performed
-
-The user has already:
-
-- edited LIFF endpoint more than once
-- clicked/ran Apps Script functions when asked
-- confirmed browser/account access
-- attempted registration repeatedly from LINE
-
-Avoid sending them in circles. The next continuation should make one precise fix at a time and verify each layer.
-
-## Recommended Next Steps for Claude Code / Next Agent
-
-1. Open Apps Script editor for project:
-   - `10Juj0moR123zmZ-1dnH-0v3PdWSSofXIO2oe6vmK1Ak4O5dHDwgoW4EU`
-2. In `รหัส.gs`, fix `doGet(e)` so it maps to `liff/register`, `liff/checkin`, etc.
-3. Save the project
-4. Create a fresh web app deployment
-5. Capture the new web app URL
-6. Update:
-   - Script Property `APPS_SCRIPT_URL`
-   - `register` LIFF endpoint
-   - any Rich Menu links if they still point to old deployment assumptions
-7. Re-test direct register page
-8. Re-test register through LINE app
-9. Confirm first row appears in `Employees`
-
-## Verification Checks
-
-After the fix, verify these in order:
-
-1. Direct web app:
-   - `.../exec?page=register` renders the actual form, not a missing file error
-2. LIFF open:
-   - `https://liff.line.me/2010518964-DU5sTlpj` no longer gives `400 bad request`
-3. Registration submit:
-   - backend returns `{ ok: true, employeeId: ... }`
-4. Google Sheet:
-   - `Employees` now contains the first employee row
-
-## Notes About Local/Workspace Files
-
-Useful local artifacts created during this session:
-
-- [employee-rich-menu.png](C:/Users/ADMIN/Documents/Codex/2026-06-26/g-h/outputs/employee-rich-menu.png)
-- [owner-rich-menu.png](C:/Users/ADMIN/Documents/Codex/2026-06-26/g-h/outputs/owner-rich-menu.png)
-- [HANDOFF-2026-06-27.md](C:/Users/ADMIN/Documents/Codex/2026-06-26/g-h/outputs/HANDOFF-2026-06-27.md)
-
-There is also a draft fixed register HTML in workspace:
-
-- `C:/Users/ADMIN/Documents/Codex/2026-06-26/g-h/work/register-fixed.html`
-
-It can be used as reference, but production truth must still be checked in Apps Script editor.
-
-## Final Summary
-
-The rollout is close, but blocked specifically by deployment mismatch and `doGet()` HTML path resolution.
-
-Do not start by changing employee schema, approvals, or OT flow.
-Fix production `register` routing first.
+1. Open Apps Script project `10Juj0moR123zmZ-1dnH-0v3PdWSSofXIO2oe6vmK1Ak4O5dHDwgoW4EU` in Chrome (hr.thanucharoen@gmail.com).
+2. For LIFF page changes, edit `docs/*.html` locally, `git push`, GitHub Pages auto-deploys (~1 min). For backend changes, edit in the web editor, save, then **New deployment** and update `register.html`'s `APPS_SCRIPT_URL`.
+3. Verify in the `Employees` sheet and the `Logs` sheet (has `doPost_debug` / `register:*` entries).
