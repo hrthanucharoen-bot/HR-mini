@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Mini HR App - leave</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #fff8f0; color: #1a1a1a; padding: 16px;
+  }
+  .header {
+    background: linear-gradient(135deg, #d4550a, #f28c28);
+    color: #fff; padding: 24px; border-radius: 16px; margin-bottom: 16px;
+  }
+  .header h1 { font-size: 22px; margin-bottom: 4px; }
+  .header p { opacity: 0.92; font-size: 13px; }
+  .balance {
+    display: flex; gap: 8px; margin-bottom: 10px;
+  }
+  .balance .card {
+    flex: 1; background: #fff; padding: 10px; border-radius: 10px; text-align: center;
+  }
+  .balance .card .label { font-size: 11px; color: #6b7280; }
+  .balance .card .value { font-size: 18px; font-weight: 700; color: #d4550a; }
+  .field {
+    background: #fff; padding: 14px; border-radius: 10px; margin-bottom: 10px;
+  }
+  .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 6px; }
+  .field input, .field select, .field textarea {
+    width: 100%; border: 1px solid #ddd; padding: 12px; border-radius: 8px;
+    font-size: 15px; font-family: inherit;
+  }
+  .field textarea { resize: vertical; min-height: 70px; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: #d4550a; outline: none; }
+  .field input:disabled { background: #f0f0f0; color: #888; }
+  .row2 { display: flex; gap: 10px; }
+  .row2 .field { flex: 1; }
+  .btn-submit {
+    background: #d4550a; color: #fff; border: none; padding: 16px;
+    border-radius: 12px; font-size: 17px; font-weight: 700; width: 100%; margin-top: 12px;
+  }
+  .btn-submit:disabled { background: #aaa; }
+  #status {
+    margin-top: 14px; padding: 12px; border-radius: 8px; text-align: center; display: none;
+  }
+  #status.show { display: block; }
+  #status.success { background: #1f7a1f; color: #fff; }
+  #status.error { background: #b23a3a; color: #fff; }
+  #status.loading { background: #f2a640; color: #fff; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>ส่งใบลา</h1>
+  <p>เลือกประเภทการลาและกรอกรายละเอียด</p>
+</div>
+
+<div class="balance" id="balanceBox" style="display:none">
+  <div class="card"><div class="label">ลาป่วย</div><div class="value" id="balSick">-</div></div>
+  <div class="card"><div class="label">ลากิจ</div><div class="value" id="balPersonal">-</div></div>
+  <div class="card"><div class="label">พักร้อน</div><div class="value" id="balVacation">-</div></div>
+</div>
+
+<div class="field">
+  <label>ประเภทการลา *</label>
+  <select id="leaveType">
+    <option value="sick">ลาป่วย</option>
+    <option value="personal">ลากิจ</option>
+    <option value="vacation">ลาพักร้อน</option>
+    <option value="unpaid">ลาไม่รับเงิน</option>
+    <option value="emergency">ลาฉุกเฉิน</option>
+  </select>
+</div>
+
+<div class="field">
+  <label>ลักษณะการลา *</label>
+  <select id="durationType">
+    <option value="full_day">เต็มวัน</option>
+    <option value="half_day_morning">ครึ่งวันเช้า</option>
+    <option value="half_day_afternoon">ครึ่งวันบ่าย</option>
+    <option value="hourly">เป็นชั่วโมง</option>
+  </select>
+</div>
+
+<div class="row2">
+  <div class="field"><label>วันที่เริ่ม *</label><input id="startDate" type="date"></div>
+  <div class="field"><label>วันที่สิ้นสุด</label><input id="endDate" type="date"></div>
+</div>
+
+<div class="field" id="hoursField" style="display:none">
+  <label>จำนวนชั่วโมง *</label>
+  <input id="totalHours" type="number" min="1" max="8" placeholder="4">
+</div>
+
+<div class="field">
+  <label>เหตุผล *</label>
+  <textarea id="reason" placeholder="ระบุเหตุผลการลา"></textarea>
+</div>
+
+<button class="btn-submit" id="btnSubmit" disabled>ส่งใบลา</button>
+<div id="status"></div>
+
+<script>
+  const LIFF_ID = '2010518964-j0VESTLK';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwaVVPmsvFIc-ggLXamg6kggrcNAsBrucAHC9gOM3u8vcm0I0VeRiSKVA_9XCuGkSp6fA/exec';
+
+  let currentLineUserId = '';
+  let balance = null;
+
+  function showStatus(message, level) {
+    const el = document.getElementById('status');
+    el.textContent = message;
+    el.className = 'show ' + level;
+  }
+
+  function updateSubmitState() {
+    const leaveType = document.getElementById('leaveType').value;
+    const durationType = document.getElementById('durationType').value;
+    const required = ['startDate', 'reason'];
+    if (durationType === 'hourly') required.push('totalHours');
+    const ok = required.every(function(id) {
+      return document.getElementById(id).value.trim();
+    }) && currentLineUserId;
+    document.getElementById('btnSubmit').disabled = !ok;
+  }
+
+  document.getElementById('durationType').addEventListener('change', function() {
+    document.getElementById('hoursField').style.display = this.value === 'hourly' ? 'block' : 'none';
+    updateSubmitState();
+  });
+
+  function fetchBalance() {
+    return new Promise(function(resolve) {
+      const cbName = '__leaveBalanceCb';
+      window[cbName] = function(data) {
+        delete window[cbName];
+        resolve(data);
+      };
+      const url = APPS_SCRIPT_URL + '?api=leave_balance&callback=' + cbName
+        + '&payload=' + encodeURIComponent(JSON.stringify({ lineUserId: currentLineUserId }));
+      const s = document.createElement('script');
+      s.src = url;
+      s.onerror = function() { resolve({ ok: false }); };
+      document.body.appendChild(s);
+      setTimeout(function() { resolve({ ok: false }); }, 8000);
+    });
+  }
+
+  function renderBalance() {
+    if (!balance || !balance.ok) return;
+    document.getElementById('balanceBox').style.display = 'flex';
+    document.getElementById('balSick').textContent = (balance.sick.quota - balance.sick.used) + '/' + balance.sick.quota;
+    document.getElementById('balPersonal').textContent = (balance.personal.quota - balance.personal.used) + '/' + balance.personal.quota;
+    document.getElementById('balVacation').textContent = (balance.vacation.quota - balance.vacation.used) + '/' + balance.vacation.quota;
+  }
+
+  async function initLiff() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) {
+        liff.login({ redirectUri: window.location.href });
+        return;
+      }
+      const profile = await liff.getProfile();
+      currentLineUserId = profile.userId || '';
+      updateSubmitState();
+      balance = await fetchBalance();
+      renderBalance();
+    } catch (err) {
+      showStatus('LIFF init error: ' + err.message, 'error');
+    }
+  }
+
+  document.querySelectorAll('input, select, textarea').forEach(function(el) {
+    el.addEventListener('input', updateSubmitState);
+  });
+
+  document.getElementById('btnSubmit').addEventListener('click', async function() {
+    const leaveType = document.getElementById('leaveType').value;
+    const durationType = document.getElementById('durationType').value;
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value || startDate;
+    const totalHours = document.getElementById('totalHours').value;
+    const reason = document.getElementById('reason').value.trim();
+
+    if (balance && balance.ok && leaveType !== 'unpaid' && leaveType !== 'emergency') {
+      const b = balance[leaveType];
+      const remaining = b.quota - b.used;
+      let requestedDays = 1;
+      if (durationType === 'half_day_morning' || durationType === 'half_day_afternoon') requestedDays = 0.5;
+      else if (durationType === 'hourly') requestedDays = Number(totalHours || 0) / 8;
+      if (requestedDays > remaining) {
+        showStatus('คุณใช้สิทธิ์ในการลาครบกำหนดแล้ว กรุณาแจ้ง HR โดยตรง', 'error');
+        return;
+      }
+    }
+
+    showStatus('กำลังส่งข้อมูล...', 'loading');
+    document.getElementById('btnSubmit').disabled = true;
+
+    const payload = {
+      action: 'leave',
+      lineUserId: currentLineUserId,
+      leaveType: leaveType,
+      durationType: durationType,
+      startDate: startDate,
+      endDate: endDate,
+      totalHours: totalHours || null,
+      reason: reason
+    };
+
+    try {
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (json.ok) {
+        showStatus('ส่งใบลาเรียบร้อย รหัส: ' + json.leaveId, 'success');
+        setTimeout(function() {
+          if (liff.isInClient()) { liff.closeWindow(); }
+        }, 1500);
+        return;
+      }
+
+      showStatus(json.message || json.error || 'เกิดข้อผิดพลาด', 'error');
+      updateSubmitState();
+    } catch (err) {
+      try {
+        await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+      } catch (e2) { /* ignore */ }
+      showStatus('ส่งข้อมูลเรียบร้อย ✅ ระบบกำลังบันทึก หากไม่ได้รับการยืนยันใน 1 นาที กรุณาแจ้ง HR', 'success');
+      setTimeout(function() {
+        if (liff.isInClient()) { liff.closeWindow(); }
+      }, 2500);
+    }
+  });
+
+  initLiff();
+</script>
+</body>
+</html>
