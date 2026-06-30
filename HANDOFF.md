@@ -2,6 +2,31 @@
 
 Continuation handoff for the production rollout (Google Apps Script + LINE OA + LIFF) for TNC Garment.
 
+## UPDATE 2026-06-30 (afternoon) — Two-deployments gotcha discovered; webhook now serves HEAD
+
+### TL;DR for whoever resumes
+1. The Apps Script project has **TWO separate web-app deployments** (different deployment IDs / URLs):
+   - **`Fix nextEmployee...`** ID `AKfycbwaVVPmsvFIc-...9XCuGkSp6fA` — what `docs/register.html` and `docs/leave.html` POST to (LIFF backend).
+   - **`Reduce to register+leave only...`** ID `AKfycbxjf7arvbNZNBStophA_...UQJw` — what the **LINE webhook** URL in the LINE Developers Console actually targets.
+2. `Manage deployments → Edit → New version → Deploy` updates **only the entry you selected** — it does NOT propagate to other deployments. The morning's v23 redeploy refreshed only the LIFF deployment; the webhook deployment was still serving a v19 snapshot from a much earlier session that predates `handleLineWebhook` in `Router.gs`. Every postback (approve/reject/list_pending_leave button) was therefore failing with `ReferenceError: handleLineWebhook is not defined`, logged into the `Logs` sheet as a `doPost` error.
+3. Fixed at **30 มิ.ย. 12:54** by repeating `Manage deployments → click "Reduce to register..." entry → pencil → dropdown → เวอร์ชันใหม่ → Deploy`. Resulting **v24** keeps the same deployment ID + URL, so the LINE webhook URL is unchanged — it just now points to a snapshot that has `handleLineWebhook + processWebhookEvent + handlePostback + handleTextMessage + handleFollowEvent + parsePostbackData`.
+4. **Going forward: any backend code change requires deploying BOTH entries.** Do it via two passes through Manage deployments. There is no "deploy all" button.
+
+### Other things from this session
+- **Approver chains set on the Employees sheet** so ปฏิพัทธ์ (EMP-0003) can exercise the approval flow end-to-end as the proxy owner. Both EMP-0002 (Jane) and EMP-0003 have `approver_L1_id = approver_L2_id = EMP-0003`. Self-approval on EMP-0003 is intentional for this test round only — it forces tester to tap "อนุมัติ" twice to walk the L1→L2 state machine.
+- **Mistake to avoid:** triple_click + ctrl+a + Delete inside the deployment dialog will, if the dialog has lost focus to the editor pane behind it, **wipe whatever .gs file is currently open**. Happened once mid-session — wiped Router.gs entirely; recovered via Ctrl+Z (12 strokes) and the file's autosave hadn't fired yet so nothing was lost. When typing the deployment description, look at the dialog after clicking the description box before typing, and prefer leaving the description unchanged if you can't visually confirm focus.
+- **`docs/*.html` URLs are unchanged.** Both `register.html:61` and `leave.html:108` still point at the `AKfycbwaVVPmsvFIc-...9XCuGkSp6fA` URL — that's the LIFF deployment, which is correct. Don't repoint them at the webhook deployment URL by mistake.
+
+### ApprovalCard postback data format — to verify after the next test
+Local `src/flex/ApprovalCard.gs` builds postback `data` as a **query-string** (`action=...&id=...&level=...&type=...`) and live `Router.gs.parsePostbackData` parses by `split('&')`. That matches. But the failed postback row in `Logs` (row 176, before the v24 fix) shows the actual postback data coming through as a **JSON object**: `{"action":"approve","id":"LV-20260630-0001","type":"leave","level":"L1"}`. Two possibilities: (a) live `ApprovalCard.gs` was edited at some point to build JSON instead of query-string (drift from local repo — entirely plausible given prior live-vs-local drift), or (b) something in the postback path JSON-encodes the data string. After the next button-press test, re-check Logs to see whether `data.action === 'approve'` actually parses — if `parsePostbackData` returns `{}` (no '&' delimiter), the second `if` falls through and the user gets `'คำสั่งไม่ถูกต้อง'`. If that happens, patch `parsePostbackData` to try `JSON.parse(dataStr)` first then fall back to query-string split. (Not patching speculatively now — wait for evidence.)
+
+### Suspicious leftover files in the live Apps Script project
+- `ไม่มีชื่อ.gs` — contains `setupStep4RichMenus` and helpers (`createRichMenu_`, `uploadRichMenuImage_`, `setDefaultRichMenu_`, `linkRichMenuToSpecificUser_`). Functionally superseded by `RichMenuSetup.gs`. **Symbols overlap** — `createRichMenu_` etc. are declared in both files. In V8 runtime the second declaration wins, but it's fragile. Safe to delete this file after confirming nothing else calls `setupStep4RichMenus()`.
+- `ไฟล์ที่ไม่มีชื่อ 3 รายการ.gs` — contains a stub `myFunction()` plus `setupAdminGuardrails()` (the one-shot data-validation installer; harmless to leave or move). Not interfering with anything.
+- Neither was the cause of the postback failure — that was purely the deployment-snapshot mismatch — but the duplicate-symbol risk in `ไม่มีชื่อ.gs` is worth cleaning up next time you're in the editor.
+
+---
+
 ## UPDATE 2026-06-30 — Employee menu trimmed to register+leave; 2 NEW BUGS DISCOVERED (not yet fixed)
 
 ### What landed this session (all deployed live)
