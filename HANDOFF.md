@@ -1,6 +1,82 @@
-# Mini HR App — Handoff Update (2026-06-29)
+# Mini HR App — Handoff Update (2026-06-30)
 
 Continuation handoff for the production rollout (Google Apps Script + LINE OA + LIFF) for TNC Garment.
+
+## UPDATE 2026-06-30 — Employee menu trimmed to register+leave; 2 NEW BUGS DISCOVERED (not yet fixed)
+
+### What landed this session (all deployed live)
+
+- **Rich menus reduced.** Employee menu = 2 buttons (`ลงทะเบียน`, `ส่งใบลา`). Owner menu = 1 button (`คำขอลารออนุมัติ`, postback `action=list_pending_leave`). Images generated locally by `scratchpad/make-richmenu-images.ps1` (GDI+ vector icons; supplementary-plane emoji rendered as tofu so were replaced with hand-drawn primitives) and committed to `docs/assets/{employee,owner}-menu.png` (2500×843, <1 MB). Created via new live `RichMenuSetup.gs` (`setupReducedRichMenus()` + `verifyRichMenus()`). Owner linked to `Ud33c1d12d516bdedec84ac0d2a7a845d`. Old rich menus deleted.
+- **Backend trimmed.** Live `Router.gs` `ACTION_HANDLERS` = `{register, leave: submitLeave, leave_balance: getLeaveBalance}`. `handlePostback` dispatches `approve/reject` → `processApprovalPostback` and `list_pending_leave` → `listPendingLeaveForOwner`. Live `รหัส.gs` `allowedPages = ['register','leave']`. `handleApiGet` restricted to `api=leave_balance` only (other api values → `{ok:false,error:'forbidden'}`). All `checkin/ot/balance/evidence/hr_*/payment` actions removed from routing — POST `action=checkin` now returns `{ok:false,error:'unknown_action'}` (verified). Handler files themselves were NOT deleted (shared helpers like `isOwner()`, `uploadImage()` still needed).
+- **Leave flow code.** `submitLeave` quota-exceeded message hardcoded to `คุณใช้สิทธิ์ในการลาครบกำหนดแล้ว กรุณาแจ้ง HR โดยตรง`. New `getLeaveBalance(payload)` returns sick/personal/vacation quota+used for current year. `processApprovalPostback`/`doApprove`/`doReject` hardcoded to leave only (OT branch + `need_info` removed). `buildLeaveApprovalCard` no longer renders the need-info button. `listPendingLeaveForOwner(userId, replyToken)` pushes one Flex card per pending leave for the owner.
+- **GitHub Pages.** New `docs/leave.html` (JSONP balance fetch + client-side quota pre-check with exact Thai message + `no-cors` submit fallback). LIFF `2010518964-j0VESTLK` endpoint repointed in LINE Console to `https://hrthanucharoen-bot.github.io/HR-mini/leave.html`. `docs/register.html` `APPS_SCRIPT_URL` bumped to v22 deployment.
+- **Active deployment** = `AKfycbwaVVPmsvFIc-ggLXamg6kggrcNAsBrucAHC9gOM3u8vcm0I0VeRiSKVA_9XCuGkSp6fA/exec` (v22).
+
+### Bugs fixed mid-session
+
+1. `handlePostback` called `processApprovalPostback(event, data)` but actual signature is `(payload)` — every approve/reject silently failed. Fixed by constructing merged payload.
+2. Duplicate file `ไฟล์ที่ไม่มีชื่อ 2 รายการ.gs` had a stale `doGet` that shadowed the main one (Apps Script last-loaded wins). Diagnosed because `?page=checkin` still rendered despite trimmed `allowedPages`. **File deleted.**
+3. `SheetStore.gs` quota helpers had wrong sheet constant (`SHEETS.LEAVEQUOTA` → `SHEETS.LEAVE_QUOTA`), wrong schema (`annual_quota` → sick/personal/vacation triple), and wrong `deductLeaveQuota` signature (4 args → 1 arg record). Rewritten to match actual sheet shape.
+
+### 🚨 NEW BUGS DISCOVERED — NOT YET FIXED (priority order)
+
+**Bug A — `nextEmployeeId()` produces wrong IDs (HIGH).** Live `Utils.gs:62`:
+```js
+function nextEmployeeId() {
+  const sheet = getSheet(SHEETS.EMPLOYEES.name);
+  const lastRow = sheet.getLastRow();
+  const count = lastRow > 1 ? lastRow - 1 : 0;
+  return 'EMP-' + padLeft(count + 1, 4);
+}
+```
+`getLastRow()` counts rows with **any cell content including dropdown/validation formatting**. `setupAdminGuardrails()` applied data validation through Employees!A2:A1000 → `getLastRow()` returns ~999 → new registration produced **EMP-0999** instead of EMP-0003. Confirmed: a test register today landed at EMP-0999. Every future registration will keep getting near-EMP-0999. **Fix (paste over the function):**
+```js
+function nextEmployeeId() {
+  var rows = getAllRows(SHEETS.EMPLOYEES.name);
+  var max = 0;
+  rows.forEach(function(r) {
+    var m = String(r.employee_id || '').match(/EMP-(\d+)/);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return 'EMP-' + padLeft(max + 1, 4);
+}
+```
+
+**Bug B — Owner has duplicate rows in `Employees` (MEDIUM).** EMP-0002 (original, created manually during setupSheets) has **empty `line_user_id`** so `findEmployeeByLineId(owner)` never matched it. When the owner test-registered today, register handler's duplicate check (`Register.gs:32`) returned null → a NEW row EMP-0999 was inserted with the owner's `line_user_id = Ud33c1d12d516bdedec84ac0d2a7a845d`. Now there are TWO owner records. `LeaveQuota` row exists only for EMP-0999. `OWNER_LINE_USER_ID` script property still resolves correctly (it's stored separately), but anything that does `findEmployeeByLineId(owner)` will return EMP-0999, while any approver column set to "EMP-0002" via the dropdown will silently route to a dead row. **Fix (sheet edits, no code):**
+  1. `Employees` sheet → EMP-0002 row → column `line_user_id` → paste `Ud33c1d12d516bdedec84ac0d2a7a845d`.
+  2. Delete the EMP-0999 row.
+  3. `LeaveQuota` sheet → delete the EMP-0999 row (will be auto-recreated for EMP-0002 on first leave submit).
+  4. Do steps 1–3 **before** fixing Bug A (otherwise the new `nextEmployeeId()` will return EMP-1000 because of the EMP-0999 max).
+
+### Task #17 verification — programmatic parts done, manual phone testing left
+
+Done: `POST action=checkin` → `unknown_action` ✅; `GET ?page=checkin` → 404 ✅; sheet row counts (Checkins/OT/Payments/Leaves all 0) ✅; rich menu API confirms 2 menus exist with correct areas ✅; owner linked to owner-menu-v2 ✅.
+
+Still to do **on the actual LINE mobile client** (cannot automate):
+- Register button opens LIFF, fills user, submits, gets welcome message
+- Leave button opens LIFF, balance pre-fills, submit valid leave → row in `Leaves`, manager gets Flex card
+- Submit over-quota leave → exact Thai rejection, no Sheet write
+- Submit `unpaid` type → bypasses quota
+- L1 approve → status `pending_L2`, owner Flex notification fires
+- L2 approve → status `approved`, employee notified
+- Reject at either level → status `rejected`
+- Owner rich-menu button → Flex list of pending leaves (or "ไม่มีคำขอลารออนุมัติ" if empty)
+
+### Files of note
+
+- Live Apps Script (source of truth, NOT git): `รหัส.gs`, `Router.gs`, `handlers/Approval.gs`, `handlers/Leave.gs`, `flex/ApprovalCard.gs`, `SheetStore.gs`, `RichMenuSetup.gs` (new), `Utils.gs` (has Bug A).
+- Local repo files updated this session: `docs/leave.html` (new), `docs/register.html` (URL bumped), `docs/assets/employee-menu.png` (new), `docs/assets/owner-menu.png` (new), `scratchpad/make-richmenu-images.ps1` (kept in scratchpad, not committed).
+- Plan file (still relevant): `C:\Users\ADMIN\.claude\plans\ot-misty-riddle.md`.
+
+### Constraints still in force
+
+- All browser work in Chrome under `hr.thanucharoen@gmail.com`.
+- Never enter LINE secrets/tokens/passwords/API keys into any form on the user's behalf.
+- Live Apps Script editor is production source of truth; local `src/` may differ.
+- Do NOT delete unused handler/LIFF files in the live project — only unwire from routing (exception was the duplicate-doGet "Untitled" file which had no other functionality).
+- When typing multi-line code into the Apps Script editor, write as a single minified line (no embedded newlines) — the editor's auto-bracket-closer inserts extra `}` otherwise.
+
+---
 
 ## UPDATE 2026-06-29 (later) — Registration CONFIRMED working + back-office = Google Sheet guardrails
 
