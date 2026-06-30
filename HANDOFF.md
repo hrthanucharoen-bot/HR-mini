@@ -18,18 +18,9 @@ Continuation handoff for the production rollout (Google Apps Script + LINE OA + 
 2. Duplicate file `ไฟล์ที่ไม่มีชื่อ 2 รายการ.gs` had a stale `doGet` that shadowed the main one (Apps Script last-loaded wins). Diagnosed because `?page=checkin` still rendered despite trimmed `allowedPages`. **File deleted.**
 3. `SheetStore.gs` quota helpers had wrong sheet constant (`SHEETS.LEAVEQUOTA` → `SHEETS.LEAVE_QUOTA`), wrong schema (`annual_quota` → sick/personal/vacation triple), and wrong `deductLeaveQuota` signature (4 args → 1 arg record). Rewritten to match actual sheet shape.
 
-### 🚨 NEW BUGS DISCOVERED — NOT YET FIXED (priority order)
+### 🚨 BUGS DISCOVERED THIS SESSION — BOTH NOW FIXED
 
-**Bug A — `nextEmployeeId()` produces wrong IDs (HIGH).** Live `Utils.gs:62`:
-```js
-function nextEmployeeId() {
-  const sheet = getSheet(SHEETS.EMPLOYEES.name);
-  const lastRow = sheet.getLastRow();
-  const count = lastRow > 1 ? lastRow - 1 : 0;
-  return 'EMP-' + padLeft(count + 1, 4);
-}
-```
-`getLastRow()` counts rows with **any cell content including dropdown/validation formatting**. `setupAdminGuardrails()` applied data validation through Employees!A2:A1000 → `getLastRow()` returns ~999 → new registration produced **EMP-0999** instead of EMP-0003. Confirmed: a test register today landed at EMP-0999. Every future registration will keep getting near-EMP-0999. **Fix (paste over the function):**
+**Bug A — `nextEmployeeId()` produced wrong IDs (HIGH) — FIXED.** Old live `Utils.gs:62` used `sheet.getLastRow()` which counts rows with **any cell content including dropdown/validation formatting**. `setupAdminGuardrails()` applied data validation through Employees!A2:A1000 → `getLastRow()` returned ~999 → today's owner test-register produced **EMP-0999** instead of EMP-0003. **Replaced live with** (saved in editor, Utils.gs lines 62-70):
 ```js
 function nextEmployeeId() {
   var rows = getAllRows(SHEETS.EMPLOYEES.name);
@@ -41,12 +32,37 @@ function nextEmployeeId() {
   return 'EMP-' + padLeft(max + 1, 4);
 }
 ```
+Pasted via clipboard (avoids the Apps Script editor's auto-bracket compounding). Ran from editor → no error. Next register call should now return EMP-0004 (max of EMP-0002 + EMP-0003 = 3).
 
-**Bug B — Owner has duplicate rows in `Employees` (MEDIUM).** EMP-0002 (original, created manually during setupSheets) has **empty `line_user_id`** so `findEmployeeByLineId(owner)` never matched it. When the owner test-registered today, register handler's duplicate check (`Register.gs:32`) returned null → a NEW row EMP-0999 was inserted with the owner's `line_user_id = Ud33c1d12d516bdedec84ac0d2a7a845d`. Now there are TWO owner records. `LeaveQuota` row exists only for EMP-0999. `OWNER_LINE_USER_ID` script property still resolves correctly (it's stored separately), but anything that does `findEmployeeByLineId(owner)` will return EMP-0999, while any approver column set to "EMP-0002" via the dropdown will silently route to a dead row. **Fix (sheet edits, no code):**
-  1. `Employees` sheet → EMP-0002 row → column `line_user_id` → paste `Ud33c1d12d516bdedec84ac0d2a7a845d`.
-  2. Delete the EMP-0999 row.
-  3. `LeaveQuota` sheet → delete the EMP-0999 row (will be auto-recreated for EMP-0002 on first leave submit).
-  4. Do steps 1–3 **before** fixing Bug A (otherwise the new `nextEmployeeId()` will return EMP-1000 because of the EMP-0999 max).
+**Bug B — what looked like an owner duplicate was actually two real employees (corrected diagnosis) — FIXED.** Opening the live `Employees` sheet showed:
+
+| row | employee_id | line_user_id | display_name | phone |
+|-----|---|---|---|---|
+| 2 | EMP-0002 | `Uae8148cab432...` | Jane Piya | 937381303 |
+| 3 | EMP-0999 (now EMP-0003) | `Ud33c1d12d516...` | ปฏิพัทธ์ วงศ์สุทธิ | 825249362 |
+
+Both rows have a real `line_user_id` and are real people — **not** a duplicate. The prior assumption that EMP-0002 had empty `line_user_id` was wrong. The two LINE IDs are different humans:
+- `Uae8148cab432...` = Jane Piya (registered earlier — the row mentioned in the 2026-06-29 update was always real)
+- `Ud33c1d12d516...` = **the owner himself (ปฏิพัทธ์)** who test-registered today and got EMP-0999 because of Bug A. This LINE ID matches the `OWNER_LINE_USER_ID` script property + the rich-menu link target.
+
+**Fix applied (sheet edits, no row deleted):**
+- `Employees` A3: `EMP-0999` → `EMP-0003` (formula bar confirmed)
+- `LeaveQuota` A3: `EMP-0999` → `EMP-0003`
+- No row deleted. No code change for this bug.
+
+Verified after the fix: `Employees` has 2 real rows (EMP-0002 Jane, EMP-0003 owner). `LeaveQuota` has matching rows. `setupAdminGuardrails()`'s dropdown validation on approver columns will now correctly offer EMP-0002 and EMP-0003.
+
+### ⚠️ STILL PENDING after this session — Apps Script redeploy
+
+The Bug A code fix is **saved in the editor** but the active **v22 deployment** at `/exec` is frozen against the old code (Apps Script web apps lock to the version used at deploy time, not HEAD). Until a new deployment is made, every fresh LIFF register call will still go through the old `nextEmployeeId()` and produce EMP-1000+ instead of EMP-0004.
+
+To finish:
+1. Apps Script editor → Deploy → Manage deployments → pencil/edit on the current Web App entry → Version dropdown → "New version" → Deploy.
+2. Copy the new `/macros/s/{deployId}/exec` URL.
+3. Update `APPS_SCRIPT_URL` in BOTH `docs/register.html` and `docs/leave.html` to the new URL.
+4. Commit + push (`docs/` is GitHub Pages, auto-redeploys in ~1 min).
+
+User explicitly chose to defer the redeploy + URL update step at the end of this session — flag this as the first thing to resume.
 
 ### Task #17 verification — programmatic parts done, manual phone testing left
 
@@ -64,7 +80,7 @@ Still to do **on the actual LINE mobile client** (cannot automate):
 
 ### Files of note
 
-- Live Apps Script (source of truth, NOT git): `รหัส.gs`, `Router.gs`, `handlers/Approval.gs`, `handlers/Leave.gs`, `flex/ApprovalCard.gs`, `SheetStore.gs`, `RichMenuSetup.gs` (new), `Utils.gs` (has Bug A).
+- Live Apps Script (source of truth, NOT git): `รหัส.gs`, `Router.gs`, `handlers/Approval.gs`, `handlers/Leave.gs`, `flex/ApprovalCard.gs`, `SheetStore.gs`, `RichMenuSetup.gs` (new), `Utils.gs` (Bug A FIXED — `nextEmployeeId` rewritten + saved; needs redeploy to take effect).
 - Local repo files updated this session: `docs/leave.html` (new), `docs/register.html` (URL bumped), `docs/assets/employee-menu.png` (new), `docs/assets/owner-menu.png` (new), `scratchpad/make-richmenu-images.ps1` (kept in scratchpad, not committed).
 - Plan file (still relevant): `C:\Users\ADMIN\.claude\plans\ot-misty-riddle.md`.
 
