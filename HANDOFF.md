@@ -43,7 +43,7 @@ Pasted via clipboard (avoids the Apps Script editor's auto-bracket compounding).
 
 Both rows have a real `line_user_id` and are real people — **not** a duplicate. The prior assumption that EMP-0002 had empty `line_user_id` was wrong. The two LINE IDs are different humans:
 - `Uae8148cab432...` = Jane Piya (registered earlier — the row mentioned in the 2026-06-29 update was always real)
-- `Ud33c1d12d516...` = **the owner himself (ปฏิพัทธ์)** who test-registered today and got EMP-0999 because of Bug A. This LINE ID matches the `OWNER_LINE_USER_ID` script property + the rich-menu link target.
+- `Ud33c1d12d516...` = ปฏิพัทธ์ วงศ์สุทธิ, who test-registered today and got EMP-0999 because of Bug A. **Note (clarified by user later in session):** ปฏิพัทธ์ is a regular employee, not the actual system owner. The `OWNER_LINE_USER_ID` script property + the rich-menu link target both currently point at his LINE ID — that's an inconsistency to resolve once the real owner registers (see "Owner role mis-pointed" below).
 
 **Fix applied (sheet edits, no row deleted):**
 - `Employees` A3: `EMP-0999` → `EMP-0003` (formula bar confirmed)
@@ -57,6 +57,27 @@ Verified after the fix: `Employees` has 2 real rows (EMP-0002 Jane, EMP-0003 own
 Bug A fix is now in production. Apps Script Manage deployments → Edit → New version → Deploy (description: "Fix nextEmployeeId() to scan max EMP-NNNN (was overcounted by getLastRow against validation rows)"). Result: **เวอร์ชัน 23 / 30 มิ.ย. 2026 11:48**. Because the Edit-existing-deployment path preserves the deployment ID, the `/exec` URL is **unchanged** (`AKfycbwaVVPmsvFIc-ggLXamg6kggrcNAsBrucAHC9gOM3u8vcm0I0VeRiSKVA_9XCuGkSp6fA/exec`) — verified via JS query on the Manage deployments dialog matches the URL already hardcoded in `docs/register.html:61` and `docs/leave.html:108`. No GitHub commit needed for the URL bump.
 
 Next registration call will exercise the new `nextEmployeeId()` and should return `EMP-0004`.
+
+### Approver setup — staged for E2E test with ปฏิพัทธ์ as proxy approver
+
+Per user's request to test the approval flow before bringing in the real owner, set both employees' approver chains to ปฏิพัทธ์ via the dropdowns on the Employees sheet:
+
+| row | approver_L1_id | approver_L2_id |
+|---|---|---|
+| EMP-0002 Jane | EMP-0003 | EMP-0003 |
+| EMP-0003 ปฏิพัทธ์ | EMP-0003 | EMP-0003 |
+
+Self-approval on EMP-0003 is intentional and only for this round of testing — once the real owner registers we'll set L2 (and L1 where appropriate) to the owner's `employee_id` instead. The L1=L2 setup also means tester must tap "อนุมัติ" twice (once for L1 → pending_L2, once for L2 → approved) to exercise the full state machine.
+
+### ⚠ Owner role mis-pointed (open inconsistency)
+
+`OWNER_LINE_USER_ID` and the owner rich-menu link both target ปฏิพัทธ์'s LINE userId (`Ud33c1d12d516…` = EMP-0003), but ปฏิพัทธ์ is a regular employee, not the actual system owner. The real owner has not registered yet and has no row in `Employees`.
+
+When ready to bring in the real owner:
+1. Owner taps the "ลงทะเบียน" button on the employee rich-menu in their own LINE → gets EMP-0004 (Bug A fix kicks in).
+2. Update Script Properties: `OWNER_LINE_USER_ID` → owner's LINE userId.
+3. Run `setupReducedRichMenus()` again — it deletes the old menus, recreates them, and links the owner menu to the new userId.
+4. On Employees sheet, change `approver_L2_id` (and `approver_L1_id` if desired) of EMP-0002 + EMP-0003 from `EMP-0003` to `EMP-0004`.
 
 ### Task #17 verification — programmatic parts done, manual phone testing left
 
