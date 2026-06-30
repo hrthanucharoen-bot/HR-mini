@@ -52,17 +52,11 @@ Both rows have a real `line_user_id` and are real people — **not** a duplicate
 
 Verified after the fix: `Employees` has 2 real rows (EMP-0002 Jane, EMP-0003 owner). `LeaveQuota` has matching rows. `setupAdminGuardrails()`'s dropdown validation on approver columns will now correctly offer EMP-0002 and EMP-0003.
 
-### ⚠️ STILL PENDING after this session — Apps Script redeploy
+### Deployment status — v23 live, URL unchanged
 
-The Bug A code fix is **saved in the editor** but the active **v22 deployment** at `/exec` is frozen against the old code (Apps Script web apps lock to the version used at deploy time, not HEAD). Until a new deployment is made, every fresh LIFF register call will still go through the old `nextEmployeeId()` and produce EMP-1000+ instead of EMP-0004.
+Bug A fix is now in production. Apps Script Manage deployments → Edit → New version → Deploy (description: "Fix nextEmployeeId() to scan max EMP-NNNN (was overcounted by getLastRow against validation rows)"). Result: **เวอร์ชัน 23 / 30 มิ.ย. 2026 11:48**. Because the Edit-existing-deployment path preserves the deployment ID, the `/exec` URL is **unchanged** (`AKfycbwaVVPmsvFIc-ggLXamg6kggrcNAsBrucAHC9gOM3u8vcm0I0VeRiSKVA_9XCuGkSp6fA/exec`) — verified via JS query on the Manage deployments dialog matches the URL already hardcoded in `docs/register.html:61` and `docs/leave.html:108`. No GitHub commit needed for the URL bump.
 
-To finish:
-1. Apps Script editor → Deploy → Manage deployments → pencil/edit on the current Web App entry → Version dropdown → "New version" → Deploy.
-2. Copy the new `/macros/s/{deployId}/exec` URL.
-3. Update `APPS_SCRIPT_URL` in BOTH `docs/register.html` and `docs/leave.html` to the new URL.
-4. Commit + push (`docs/` is GitHub Pages, auto-redeploys in ~1 min).
-
-User explicitly chose to defer the redeploy + URL update step at the end of this session — flag this as the first thing to resume.
+Next registration call will exercise the new `nextEmployeeId()` and should return `EMP-0004`.
 
 ### Task #17 verification — programmatic parts done, manual phone testing left
 
